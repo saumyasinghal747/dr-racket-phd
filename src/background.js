@@ -1,14 +1,17 @@
 'use strict'
 
-import { app, protocol, BrowserWindow } from 'electron'
+import { app, protocol, BrowserWindow, ipcMain } from 'electron'
 import { createProtocol } from 'vue-cli-plugin-electron-builder/lib'
 import installExtension, { VUEJS_DEVTOOLS } from 'electron-devtools-installer'
 const isDevelopment = process.env.NODE_ENV !== 'production'
 const pathToRacket = "/Applications/Racket/bin/racket";
+const pty = require('node-pty');
+const os = require('os');
+//var shell = os.platform() === 'win32' ? 'powershell.exe' : 'bash';//we don't really need this
 // Keep a global reference of the window object, if you don't, the window will
 // be closed automatically when the JavaScript object is garbage collected.
-let win
-
+let win;
+let rktProcess;
 // Scheme must be registered before the app is ready
 protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { secure: true, standard: true } }
@@ -30,7 +33,7 @@ function createWindow() {
   if (process.env.WEBPACK_DEV_SERVER_URL) {
     // Load the url of the dev server if in development mode
     win.loadURL(process.env.WEBPACK_DEV_SERVER_URL)
-    if (!process.env.IS_TEST) win.webContents.openDevTools()
+    if (!process.env.IS_TEST){}// win.webContents.openDevTools()
   } else {
     createProtocol('app')
     // Load the index.html when not in development
@@ -72,6 +75,29 @@ app.on('ready', async () => {
     }
   }
   createWindow()
+  win.webContents.on('did-finish-load',function () {
+    /*let rktProcess = pty.spawn(pathToRacket,[],{
+      cwd: process.env.HOME,
+      env: process.env
+    });
+
+    rktProcess.on('data',function (data) {
+      win.webContents.send('terminal-output',data)
+    })
+    rktProcess.onExit(function (data) {
+      //win.webContents.send('terminal-output',JSON.stringify(data))
+    })
+
+    ipcMain.on('terminal-input',function (event, args) {
+      //event.reply('terminal-output',`You said ${args}`)
+      rktProcess.write(args);
+      console.log(JSON.stringify(args))
+
+    })
+    ipcMain.on('stop-process',function (event,args) {
+      rktProcess.kill()
+    })*/
+  })
 })
 
 // Exit cleanly on request from parent process in development mode.
@@ -88,3 +114,5 @@ if (isDevelopment) {
     })
   }
 }
+
+

@@ -30,7 +30,7 @@
              icon
              color="red"
       >
-        <v-icon color="red" style="margin-right: 0">mdi-stop</v-icon>
+        <v-icon @click="stopExecution" color="red" style="margin-right: 0">mdi-stop</v-icon>
       </v-btn>
     </v-system-bar>
     
@@ -39,8 +39,8 @@
         <file-explorer style="overflow: scroll;height: 100vh"/>
       </SplitArea>
       <SplitArea :size="85">
-        <Split direction="vertical">
-          <SplitArea :size="75">
+        <Split direction="vertical" >
+          <SplitArea :size="60">
             <MonacoEditor
                     
                     v-model="$store.state.file.content"
@@ -54,22 +54,8 @@
                     :editorMounted="onMount"
             ></MonacoEditor>
           </SplitArea>
-          <SplitArea :size="20">
-            <MonacoEditor
-          
-                    v-model="outputText"
-                    class="editor"
-                    theme="vs-dark"
-                    language="scheme"
-                    :options="{...options, readOnly:true}"
-                    
-                    height="100%"
-            ></MonacoEditor>
-          </SplitArea>
-          <SplitArea :size="5">
-            <MonacoEditor  theme="vs-dark" language="scheme" :options="{
-              lineNumbers:false
-            }" ></MonacoEditor>
+          <SplitArea :size="40">
+            <div ref="term" ></div>
           </SplitArea>
         </Split>
         
@@ -83,17 +69,66 @@
 // @ is an alias to /src
 import MonacoEditor from 'monaco-editor-vue';
 const { spawn } = require("child_process");
+const { ipcRenderer} = require('electron')
 import FileExplorer from "../components/fileExplorer";
+import { Terminal } from 'xterm';
+import LocalEchoController from 'local-echo';
+import { FitAddon } from 'xterm-addon-fit';
 const fs = require('fs');
-const path = require('path')
+const path = require('path');
+
 export default {
   name: 'Home',
   components: {
     FileExplorer,
     MonacoEditor
   },
+  mounted() {
+    this.term = new Terminal({
+      convertEol:true,
+      theme:{
+        background:"#1f2020",
+        brightCyan:"#13b9da"
+      }
+    });
+    this.term.open(this.$refs.term);
+    this.localEcho = new LocalEchoController(null,{
+      isIncompleteInput:function (input) {
+        if (input==='') return true;
+        const count = (input.match(/"/g)||[]).length
+        console.log(count % 2===0);
+        return count % 2===1
+      }
+    });
+    let localEcho = this.localEcho;
+    this.fitAddon = new FitAddon();
+    this.term.loadAddon(localEcho);
+    this.term.loadAddon(this.fitAddon);
+    this.fitAddon.fit();
+    //this.term.write('Hello from \x1B[1;3;31mxterm.js\x1B[0m $ ');
+    // spawn the process from the get-go
+    const vapp = this;
+    ipcRenderer.on('terminal-output',function (event, args) {
+      
+      console.log(args);
+      if (args.endsWith("> ")){
+        /*localEcho.read("> ")
+                .then(input => {
+                  //alert(`User entered: ${input}`)
+                  ipcRenderer.send('terminal-input',input)
+                })
+                .catch(error => alert(`Error reading: ${error}`));*/
+      }
+      else{
+        vapp.term.write(args);
+      }
+    })
+    
+  },
 data() {
   return {
+    term:null,
+    fitAddon:null,
     options: {
       //Monaco Editor Options
       //minimap:true,
@@ -135,6 +170,7 @@ methods: {
   },
   registerLang(monaco){
     //console.log(monaco)
+    monaco.languages.register({id:'scheme'})
     monaco.languages.registerCompletionItemProvider('scheme', {
       provideCompletionItems: () => {
         var suggestions = [{
@@ -167,20 +203,49 @@ methods: {
     
   },
   executeFile(){
+    this.stopExecution();
     this.outputText = "";
     const path = this.$store.state.file.path
     if (!path) return false;
-    const ls = spawn(`racket`,[`-i`,`-e`,`${this.$store.state.file.content}`]);
+    const ls = spawn(`racket`,['-i',`-e`,`${this.$store.state.file.content}`]);
     const vapp = this;
-    
+    this.term.write('\x1bc')
+    //this.term.clear()
     ls.stdout.on("data", data => {
       //console.log(`stdout: ${data}`);
-      vapp.outputText += data
+      vapp.outputText += data;
+      
+      if (data.toString().endsWith("> ")){
+        vapp.term.write(`\x1B[1;36m${data.slice(0, data.length - 2)}\x1b[0m`)
+        console.log("input")
+        vapp.localEcho.read("> ")
+                .then(input => {
+                  
+                  console.log(`User entered: ${input}`)
+                  //input =  input.split('\n').join("\\n");
+                  console.log("writing")
+                  if (!['(','"',','].includes( input.split('')[0])){
+                    if ( input.split('')[0]==="'") input = `"${input}"`;
+                    input = `(display ${input.split(" ")[0].split('\n')[0]})`
+                    //console.log(input)
+                  }
+                  ls.stdin._write(input,'utf-8',(a)=>{console.log(`Something happened ${a}  `)})
+                })
+                .catch(error => alert(`Error reading: ${error}`));
+      }
+    else {
+      console.log(JSON.stringify(data.toString()));
+      console.log(data)
+        vapp.term.writeln(`\x1B[1;36m${data}\x1b[0m`)
+        
+      }
+      //vapp.term.write('\n')
     });
   
     ls.stderr.on("data", data => {
       console.log(`stderr: ${data}`);
-      vapp.outputText += data
+      vapp.term.write(`\x1B[1;3;31m${data}\x1B[0m`)
+      //vapp.outputText += data
     });
   
     ls.on('error', (error) => {
@@ -193,6 +258,9 @@ methods: {
     });
     // racket -i -e "$(cat test.rkt)(display \"\n\")" opens a REPL. We need to pipe this somehow into the bottom editor.
     
+  },
+  stopExecution(){
+    ipcRenderer.send('stop-process')
   },
   onMount(monaco,editor){
    // console.log(editor)
@@ -229,3 +297,6 @@ methods: {
 </style>
 
 
+<style scoped>
+  @import '~xterm/css/xterm.css';
+</style>
